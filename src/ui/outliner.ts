@@ -14,9 +14,17 @@ import {
   switchParentPath,
   getScopeName,
   getParentScopes,
-  getChildScopes,
-  createChildScope,
+  getNavigableFacts,
 } from '../scope/navigation';
+import {
+  createAutocompleteInput,
+  getAutocompleteValue,
+  clearAutocomplete,
+  focusAutocomplete,
+  getAutocompleteInput,
+} from './autocomplete';
+import { tryParseExpression } from '../expr/parse';
+import { formatExpression, isConstructor } from '../expr/types';
 
 interface AppContext {
   identity: Identity;
@@ -108,44 +116,31 @@ function renderScopeNavigator(
 
   container.appendChild(breadcrumbs);
 
-  // Child scopes
-  const children = getChildScopes(store, navigation.currentScope);
-  if (children.length > 0) {
-    const childList = document.createElement('div');
-    childList.className = 'child-scopes';
+  // Navigable facts (facts you can enter like directories)
+  const navigable = getNavigableFacts(store, navigation.currentScope);
+  if (navigable.length > 0) {
+    const navList = document.createElement('div');
+    navList.className = 'navigable-facts';
 
     const label = document.createElement('span');
-    label.className = 'child-scopes-label';
-    label.textContent = 'Subscopes: ';
-    childList.appendChild(label);
+    label.className = 'navigable-facts-label';
+    label.textContent = 'Enter: ';
+    navList.appendChild(label);
 
-    children.forEach((childId) => {
-      const childBtn = document.createElement('button');
-      childBtn.className = 'child-scope-btn';
-      childBtn.textContent = getScopeName(store, childId);
-      childBtn.onclick = () => {
-        const newState = navigateToChild(navigation, childId);
+    navigable.forEach((fact) => {
+      const factBtn = document.createElement('button');
+      factBtn.className = 'navigable-fact-btn';
+      factBtn.textContent = fact.displayName;
+      factBtn.title = fact.key;
+      factBtn.onclick = () => {
+        const newState = navigateToChild(navigation, fact.id);
         onNavigate(newState);
       };
-      childList.appendChild(childBtn);
+      navList.appendChild(factBtn);
     });
 
-    container.appendChild(childList);
+    container.appendChild(navList);
   }
-
-  // Add new child scope button
-  const addChild = document.createElement('button');
-  addChild.className = 'add-child-scope-btn';
-  addChild.textContent = '+ New Subscope';
-  addChild.onclick = () => {
-    const name = prompt('Name for new subscope:');
-    if (name) {
-      const childId = createChildScope(store, navigation.currentScope, name, navigation.currentScope);
-      const newState = navigateToChild(navigation, childId);
-      onNavigate(newState);
-    }
-  };
-  container.appendChild(addChild);
 
   // Up button
   if (navigation.path.length > 1) {
@@ -251,44 +246,98 @@ function renderFactTree(store: DatalogStore, currentScope: ScopeId, nodeId: stri
 function renderAddFactForm(store: DatalogStore, currentScope: ScopeId, nodeId: string): HTMLElement {
   const form = document.createElement('div');
   form.className = 'add-fact-form';
-  form.innerHTML = `
-    <input type="text" id="fact-key" placeholder="key" />
-    <input type="text" id="fact-value" placeholder="value" />
-    <button id="add-fact-btn">Add</button>
-  `;
 
-  const keyInput = form.querySelector('#fact-key') as HTMLInputElement;
-  const valueInput = form.querySelector('#fact-value') as HTMLInputElement;
-  const addBtn = form.querySelector('#add-fact-btn') as HTMLButtonElement;
+  let currentKeyValue = '';
+
+  // Key input with autocomplete
+  const keyAutocomplete = createAutocompleteInput({
+    store,
+    scope: currentScope,
+    type: 'key',
+    placeholder: 'key (e.g., name, eq(x))',
+    onChange: (v) => {
+      currentKeyValue = v;
+    },
+  });
+
+  // Value input with autocomplete
+  const valueAutocomplete = createAutocompleteInput({
+    store,
+    scope: currentScope,
+    type: 'value',
+    placeholder: 'value',
+    forKey: currentKeyValue,
+  });
+
+  const addBtn = document.createElement('button');
+  addBtn.id = 'add-fact-btn';
+  addBtn.textContent = 'Add';
 
   const addFact = () => {
-    const key = keyInput.value.trim();
-    let value: Value = valueInput.value.trim();
+    const keyStr = getAutocompleteValue(keyAutocomplete).trim();
+    const valueStr = getAutocompleteValue(valueAutocomplete).trim();
 
-    if (!key) return;
+    if (!keyStr) return;
 
-    // Try to parse as number or boolean
-    if (value === 'true') value = true;
-    else if (value === 'false') value = false;
-    else if (value === 'null') value = null;
-    else if (/^-?\d+(\.\d+)?$/.test(value as string)) value = parseFloat(value as string);
+    // Parse key as expression (could be constructor like eq(x))
+    const keyExpr = tryParseExpression(keyStr);
+    const key = keyExpr !== null && isConstructor(keyExpr)
+      ? formatExpression(keyExpr)
+      : keyStr;
+
+    // Parse value
+    let value: Value = valueStr;
+    if (valueStr === 'true') value = true;
+    else if (valueStr === 'false') value = false;
+    else if (valueStr === 'null') value = null;
+    else if (/^-?\d+(\.\d+)?$/.test(valueStr)) value = parseFloat(valueStr);
 
     // Add to current scope
     store.add([key, value], nodeId, currentScope);
 
-    keyInput.value = '';
-    valueInput.value = '';
-    keyInput.focus();
+    clearAutocomplete(keyAutocomplete);
+    clearAutocomplete(valueAutocomplete);
+    focusAutocomplete(keyAutocomplete);
   };
 
   addBtn.onclick = addFact;
 
-  // Enter key to add
-  [keyInput, valueInput].forEach((input) => {
-    input.onkeydown = (e) => {
-      if (e.key === 'Enter') addFact();
+  // Enter key to add (on value input)
+  const valueInput = getAutocompleteInput(valueAutocomplete);
+  if (valueInput) {
+    const originalKeydown = valueInput.onkeydown;
+    valueInput.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.defaultPrevented) {
+        // Only add if dropdown is hidden (not selecting from dropdown)
+        const dropdown = valueAutocomplete.querySelector('.autocomplete-dropdown');
+        if (dropdown?.classList.contains('hidden')) {
+          addFact();
+          e.preventDefault();
+        }
+      }
+      originalKeydown?.call(valueInput, e);
     };
-  });
+  }
+
+  // Tab from key to value
+  const keyInput = getAutocompleteInput(keyAutocomplete);
+  if (keyInput) {
+    const originalKeydown = keyInput.onkeydown;
+    keyInput.onkeydown = (e) => {
+      if (e.key === 'Tab' && !e.shiftKey) {
+        const dropdown = keyAutocomplete.querySelector('.autocomplete-dropdown');
+        if (dropdown?.classList.contains('hidden')) {
+          e.preventDefault();
+          focusAutocomplete(valueAutocomplete);
+        }
+      }
+      originalKeydown?.call(keyInput, e);
+    };
+  }
+
+  form.appendChild(keyAutocomplete);
+  form.appendChild(valueAutocomplete);
+  form.appendChild(addBtn);
 
   return form;
 }
@@ -298,58 +347,37 @@ function renderQueryBuilder(store: DatalogStore, currentScope: ScopeId): HTMLEle
   const panel = document.createElement('div');
   panel.className = 'query-builder';
 
-  panel.innerHTML = `
-    <h4>Query in current scope</h4>
-    <div class="query-pattern">
-      <div class="pattern-slot" data-slot="key">
-        <label>Key</label>
-        <div class="slot-options">
-          <button class="slot-btn" data-type="any">Any (?k)</button>
-          <button class="slot-btn active" data-type="specific">Specific</button>
-        </div>
-        <input type="text" class="slot-input" placeholder="key" />
-      </div>
+  const header = document.createElement('h4');
+  header.textContent = 'Query';
+  panel.appendChild(header);
 
-      <div class="pattern-slot" data-slot="value">
-        <label>Value</label>
-        <div class="slot-options">
-          <button class="slot-btn active" data-type="any">Any (?v)</button>
-          <button class="slot-btn" data-type="specific">Specific</button>
-        </div>
-        <input type="text" class="slot-input hidden" placeholder="value" />
-      </div>
-    </div>
+  const patternDiv = document.createElement('div');
+  patternDiv.className = 'query-pattern';
 
-    <div class="query-preview">
-      <code class="pattern-text"></code>
-    </div>
-
-    <div class="query-results empty">Configure pattern above</div>
-  `;
-
-  const slots = panel.querySelectorAll('.pattern-slot');
-  const patternText = panel.querySelector('.pattern-text') as HTMLElement;
-  const resultsDiv = panel.querySelector('.query-results') as HTMLDivElement;
-
-  // State for each slot (scope is always current)
-  const state: Record<string, { type: string; value: string }> = {
-    key: { type: 'specific', value: '' },
+  // State for each slot
+  const state = {
+    key: { type: 'any', value: '' },
     value: { type: 'any', value: '' },
   };
 
+  const resultsDiv = document.createElement('div');
+  resultsDiv.className = 'query-results empty';
+  resultsDiv.textContent = 'Enter a pattern to query';
+
+  const previewDiv = document.createElement('div');
+  previewDiv.className = 'query-preview';
+  const previewCode = document.createElement('code');
+  previewCode.className = 'pattern-text';
+  previewDiv.appendChild(previewCode);
+
   function updatePreview() {
-    const keyPart = state.key.type === 'any' ? '?key'
-      : state.key.value || '?key';
-
-    const valuePart = state.value.type === 'any' ? '?val'
-      : state.value.value || '?val';
-
-    patternText.textContent = `[${keyPart}, ${valuePart}]`;
+    const keyPart = state.key.type === 'any' ? '?key' : state.key.value || '?key';
+    const valuePart = state.value.type === 'any' ? '?val' : state.value.value || '?val';
+    previewCode.textContent = `[${keyPart}, ${valuePart}]`;
   }
 
   function runQuery() {
     try {
-      // Build pattern
       const keyPattern = state.key.type === 'any'
         ? v('key')
         : parseValue(state.key.value);
@@ -359,8 +387,6 @@ function renderQueryBuilder(store: DatalogStore, currentScope: ScopeId): HTMLEle
         : parseValue(state.value.value);
 
       const pattern: Pattern = [keyPattern, valuePattern];
-
-      // Always query in current scope only
       const bindings = query(store, [pattern], { scope: currentScope });
 
       if (bindings.length === 0) {
@@ -378,44 +404,74 @@ function renderQueryBuilder(store: DatalogStore, currentScope: ScopeId): HTMLEle
     }
   }
 
-  // Set up slot interactions
-  slots.forEach((slot) => {
-    const slotName = (slot as HTMLElement).dataset.slot!;
-    const buttons = slot.querySelectorAll('.slot-btn');
-    const input = slot.querySelector('.slot-input') as HTMLInputElement;
+  // Create slots with autocomplete
+  function createSlot(name: string, label: string, type: 'key' | 'value') {
+    const slot = document.createElement('div');
+    slot.className = 'pattern-slot';
 
-    buttons.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const type = (btn as HTMLElement).dataset.type!;
+    const labelEl = document.createElement('label');
+    labelEl.textContent = label;
+    slot.appendChild(labelEl);
 
-        // Update button states
-        buttons.forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
+    const options = document.createElement('div');
+    options.className = 'slot-options';
 
-        // Update state
-        state[slotName].type = type;
+    const anyBtn = document.createElement('button');
+    anyBtn.className = 'slot-btn active';
+    anyBtn.textContent = `Any (?${name[0]})`;
+    anyBtn.dataset.type = 'any';
 
-        // Show/hide input
-        if (type === 'specific') {
-          input.classList.remove('hidden');
-          input.focus();
+    const specificBtn = document.createElement('button');
+    specificBtn.className = 'slot-btn';
+    specificBtn.textContent = 'Specific';
+    specificBtn.dataset.type = 'specific';
+
+    options.appendChild(anyBtn);
+    options.appendChild(specificBtn);
+    slot.appendChild(options);
+
+    const autocomplete = createAutocompleteInput({
+      store,
+      scope: currentScope,
+      type,
+      placeholder: name,
+      onChange: (v) => {
+        state[name as 'key' | 'value'].value = v;
+        updatePreview();
+        runQuery();
+      },
+    });
+    autocomplete.classList.add('hidden');
+    slot.appendChild(autocomplete);
+
+    [anyBtn, specificBtn].forEach((btn) => {
+      btn.onclick = () => {
+        anyBtn.classList.toggle('active', btn === anyBtn);
+        specificBtn.classList.toggle('active', btn === specificBtn);
+        state[name as 'key' | 'value'].type = btn.dataset.type!;
+
+        if (btn.dataset.type === 'specific') {
+          autocomplete.classList.remove('hidden');
+          focusAutocomplete(autocomplete);
         } else {
-          input.classList.add('hidden');
+          autocomplete.classList.add('hidden');
         }
 
         updatePreview();
         runQuery();
-      });
+      };
     });
 
-    input.addEventListener('input', () => {
-      state[slotName].value = input.value;
-      updatePreview();
-      runQuery();
-    });
-  });
+    return slot;
+  }
 
-  // Initial state
+  patternDiv.appendChild(createSlot('key', 'Key', 'key'));
+  patternDiv.appendChild(createSlot('value', 'Value', 'value'));
+
+  panel.appendChild(patternDiv);
+  panel.appendChild(previewDiv);
+  panel.appendChild(resultsDiv);
+
   updatePreview();
   runQuery();
 

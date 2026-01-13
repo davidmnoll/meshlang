@@ -32,21 +32,53 @@ export function getParentScopes(store: DatalogStore, scopeId: ScopeId): ScopeId[
   return [];
 }
 
-// Get child scopes
-export function getChildScopes(store: DatalogStore, scopeId: ScopeId): ScopeId[] {
+// Navigable fact - a fact that can be entered like a directory
+export interface NavigableFact {
+  id: ScopeId;       // The scope ID when you enter this fact
+  key: string;       // The fact's key
+  displayName: string;
+}
+
+// Get navigable facts - facts you can "enter" like directories
+// Any fact with a constructor key (like eq(symbol("x"))) is navigable
+export function getNavigableFacts(store: DatalogStore, scopeId: ScopeId): NavigableFact[] {
   const facts = store.findByScope(scopeId);
-  const childrenFact = facts.find((f) => f.fact[0] === 'children');
+  const navigable: NavigableFact[] = [];
 
-  if (!childrenFact) return [];
+  // Pattern for constructor-style keys that create navigable scopes
+  const constructorPattern = /^(\w+)\((.+)\)$/;
 
-  const value = childrenFact.fact[1];
-  if (Array.isArray(value)) {
-    return value as ScopeId[];
+  for (const fact of facts) {
+    const key = fact.fact[0];
+    const match = key.match(constructorPattern);
+
+    if (match) {
+      // This is a constructor-style key - it's navigable
+      // The child scope ID is the fact's ID
+      const childId = fact.id;
+
+      // Extract a display name from the constructor
+      let displayName = key;
+      // Try to get a simpler name from symbol("name") pattern
+      const symbolMatch = key.match(/symbol\("([^"]+)"\)/);
+      if (symbolMatch) {
+        displayName = symbolMatch[1];
+      }
+
+      navigable.push({
+        id: childId,
+        key,
+        displayName,
+      });
+    }
   }
-  if (typeof value === 'string') {
-    return [value];
-  }
-  return [];
+
+  return navigable;
+}
+
+// Get child scopes (for backwards compatibility) - now returns navigable fact IDs
+export function getChildScopes(store: DatalogStore, scopeId: ScopeId): ScopeId[] {
+  return getNavigableFacts(store, scopeId).map((f) => f.id);
 }
 
 // Build a ScopeNode from facts
