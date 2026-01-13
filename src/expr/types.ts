@@ -31,10 +31,14 @@ export interface ScopeRef {
 export type Expression = Literal | Variable | Constructor | ScopeRef;
 
 // Constructor definition - defines what arguments a constructor takes
+// AND what constructors are valid inside the scope it creates
 export interface ConstructorDef {
   name: string;
   params: ParamDef[];  // Empty array for 0-ary constructors
   description?: string;
+  // Type context: what's allowed/required inside scopes created by this constructor
+  allowedChildren?: string[];   // Constructor names allowed inside (if undefined, all are allowed)
+  requiredChildren?: string[];  // Constructor names that must be present
 }
 
 export interface ParamDef {

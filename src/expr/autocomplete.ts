@@ -97,16 +97,48 @@ export function getAvailableScopes(store: DatalogStore, currentScope: string): A
   });
 }
 
+// Get a constructor definition by name
+export function getConstructorByName(name: string): ConstructorDef | undefined {
+  return BUILTIN_CONSTRUCTORS.find((c) => c.name === name);
+}
+
+// Extract constructor name from a key like "name" or "eq(symbol("x"))"
+export function extractConstructorName(key: string): string | undefined {
+  // Try constructor with args: name(...)
+  const match = key.match(/^(\w+)\(/);
+  if (match) return match[1];
+
+  // Try 0-ary constructor: just the name
+  const def = BUILTIN_CONSTRUCTORS.find((c) => c.name === key && c.params.length === 0);
+  if (def) return key;
+
+  return undefined;
+}
+
 // Generate suggestions for key input
+// parentConstructorName: the constructor that created the current scope (filters what's allowed)
 export function suggestKeys(
   store: DatalogStore,
   scope: string,
-  input: string
+  input: string,
+  parentConstructorName?: string
 ): Suggestion[] {
   const suggestions: Suggestion[] = [];
   const lower = input.toLowerCase();
 
-  // 1. Keys in scope
+  // Get parent constructor's allowed children (if any)
+  let allowedChildren: string[] | undefined;
+  if (parentConstructorName) {
+    const parentDef = getConstructorByName(parentConstructorName);
+    if (parentDef) {
+      allowedChildren = parentDef.allowedChildren;
+    }
+  }
+
+  // If allowedChildren is empty array, no constructors allowed (terminal scope)
+  const isTerminal = allowedChildren !== undefined && allowedChildren.length === 0;
+
+  // 1. Keys in scope (always show existing keys)
   const keys = getKeysInScope(store, scope);
   for (const key of keys) {
     if (key.toLowerCase().includes(lower)) {
@@ -118,32 +150,39 @@ export function suggestKeys(
     }
   }
 
-  // 2. Constructors from store + built-ins
-  const storeConstructors = getConstructorDefs(store, scope);
-  const allConstructors = [...BUILTIN_CONSTRUCTORS, ...storeConstructors];
-  const seenNames = new Set<string>();
+  // 2. Constructors - filtered by parent context
+  if (!isTerminal) {
+    const storeConstructors = getConstructorDefs(store, scope);
+    const allConstructors = [...BUILTIN_CONSTRUCTORS, ...storeConstructors];
+    const seenNames = new Set<string>();
 
-  for (const def of allConstructors) {
-    if (seenNames.has(def.name)) continue;
-    seenNames.add(def.name);
+    for (const def of allConstructors) {
+      if (seenNames.has(def.name)) continue;
+      seenNames.add(def.name);
 
-    if (def.name.toLowerCase().includes(lower)) {
-      if (def.params.length === 0) {
-        suggestions.push({
-          text: def.name,
-          display: def.name,
-          description: def.description,
-          type: 'constructor',
-        });
-      } else {
-        const params = def.params.map((p) => p.name).join(', ');
-        suggestions.push({
-          text: `${def.name}(`,
-          display: `${def.name}(${params})`,
-          description: def.description,
-          type: 'constructor',
-          completion: `${def.name}()`,
-        });
+      // Filter by allowed children if specified
+      if (allowedChildren !== undefined && !allowedChildren.includes(def.name)) {
+        continue;
+      }
+
+      if (def.name.toLowerCase().includes(lower)) {
+        if (def.params.length === 0) {
+          suggestions.push({
+            text: def.name,
+            display: def.name,
+            description: def.description,
+            type: 'constructor',
+          });
+        } else {
+          const params = def.params.map((p) => p.name).join(', ');
+          suggestions.push({
+            text: `${def.name}(`,
+            display: `${def.name}(${params})`,
+            description: def.description,
+            type: 'constructor',
+            completion: `${def.name}()`,
+          });
+        }
       }
     }
   }
@@ -151,6 +190,7 @@ export function suggestKeys(
   // 3. Check if we're inside a constructor call
   const partial = getPartialConstructor(input);
   if (partial) {
+    const allConstructors = [...BUILTIN_CONSTRUCTORS, ...getConstructorDefs(store, scope)];
     const def = allConstructors.find((c) => c.name === partial.name);
     if (def && partial.argCount < def.params.length) {
       const param = def.params[partial.argCount];
@@ -244,18 +284,34 @@ export function suggestValues(
   return suggestions;
 }
 
-// Built-in constructors that are always available
+// Built-in constructors with type context rules
+// allowedChildren: undefined = all allowed, [] = none (terminal), [...] = specific list
 export const BUILTIN_CONSTRUCTORS: ConstructorDef[] = [
-  { name: 'name', params: [], description: 'Name attribute' },
-  { name: 'type', params: [], description: 'Type attribute' },
-  { name: 'value', params: [], description: 'Value attribute' },
-  { name: 'symbol', params: [{ name: 'name', type: 'string' }], description: 'Create a symbol (scope/identifier)' },
-  { name: 'eq', params: [{ name: 'expr', type: 'any' }], description: 'Equality/binding - use eq(symbol("x")) to create scope' },
-  { name: 'lt', params: [{ name: 'num', type: 'number' }], description: 'Less than' },
-  { name: 'gt', params: [{ name: 'num', type: 'number' }], description: 'Greater than' },
-  { name: 'ref', params: [{ name: 'target', type: 'any' }], description: 'Reference to another scope/symbol' },
-  { name: 'list', params: [{ name: 'items', type: 'any' }], description: 'List of items' },
-  { name: 'peer', params: [{ name: 'id', type: 'string' }], description: 'Peer connection - navigate into to connect' },
+  // Top-level constructors (available at root/actor scope)
+  { name: 'name', params: [], description: 'Name attribute', allowedChildren: ['string'] },
+  { name: 'type', params: [], description: 'Type attribute', allowedChildren: ['symbol'] },
+  { name: 'value', params: [], description: 'Value attribute' },  // allows any
+  { name: 'symbol', params: [{ name: 'name', type: 'string' }], description: 'Create a symbol', allowedChildren: [] },
+  { name: 'eq', params: [{ name: 'expr', type: 'any' }], description: 'Equality/binding scope' },  // allows any
+  { name: 'lt', params: [{ name: 'num', type: 'number' }], description: 'Less than', allowedChildren: [] },
+  { name: 'gt', params: [{ name: 'num', type: 'number' }], description: 'Greater than', allowedChildren: [] },
+  { name: 'ref', params: [{ name: 'target', type: 'any' }], description: 'Reference to scope', allowedChildren: [] },
+  { name: 'list', params: [{ name: 'items', type: 'any' }], description: 'List of items', allowedChildren: ['item', 'next'] },
+  { name: 'peer', params: [{ name: 'id', type: 'string' }], description: 'Peer connection', allowedChildren: [] },
+  { name: 'group', params: [{ name: 'name', type: 'string' }], description: 'Group with synced scope', allowedChildren: ['peer', 'consensus', 'root'] },
+  { name: 'consensus', params: [], description: 'Consensus rule (default: unanimous)', allowedChildren: ['unanimous', 'majority', 'threshold'] },
+  { name: 'unanimous', params: [], description: 'Require all peers to agree', allowedChildren: [] },
+  { name: 'majority', params: [], description: 'Require majority to agree', allowedChildren: [] },
+  { name: 'threshold', params: [{ name: 'n', type: 'number' }], description: 'Require n peers to agree', allowedChildren: [] },
+  { name: 'root', params: [], description: 'Group root scope (synced data)', allowedChildren: undefined },  // allows any
+
+  // String type: linked list of characters
+  { name: 'string', params: [], description: 'String value', allowedChildren: ['data', 'next'], requiredChildren: ['data'] },
+  { name: 'data', params: [{ name: 'char', type: 'number' }], description: 'Character code', allowedChildren: [] },
+  { name: 'next', params: [{ name: 'rest', type: 'scope' }], description: 'Rest of string/list', allowedChildren: [] },
+
+  // List items
+  { name: 'item', params: [{ name: 'value', type: 'any' }], description: 'List item', allowedChildren: [] },
 ];
 
 // Initialize scope with built-in constructors

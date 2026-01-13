@@ -10,6 +10,7 @@ export interface AutocompleteConfig {
   type: 'key' | 'value';
   placeholder: string;
   forKey?: string;  // For value inputs, what key is this value for
+  parentConstructor?: string;  // The constructor that created this scope (filters available constructors)
   onSelect?: (value: string) => void;
   onChange?: (value: string) => void;
 }
@@ -44,7 +45,7 @@ export function createAutocompleteInput(config: AutocompleteConfig): HTMLElement
     const value = input.value;
 
     if (config.type === 'key') {
-      suggestions = suggestKeys(config.store, config.scope, value);
+      suggestions = suggestKeys(config.store, config.scope, value, config.parentConstructor);
     } else {
       suggestions = suggestValues(config.store, config.scope, value, config.forKey);
     }

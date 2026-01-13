@@ -25,6 +25,27 @@ import {
 } from './autocomplete';
 import { tryParseExpression } from '../expr/parse';
 import { formatExpression, isConstructor } from '../expr/types';
+import { extractConstructorName } from '../expr/autocomplete';
+
+// Get the constructor that created the current scope (for type context filtering)
+function getParentConstructor(store: DatalogStore, navigation: NavigationState): string | undefined {
+  if (navigation.path.length < 2) {
+    return undefined;  // At root - no parent constructor
+  }
+
+  const parentScopeId = navigation.path[navigation.path.length - 2];
+  const currentScopeId = navigation.currentScope;
+
+  // Find the fact in parent scope that led to this scope
+  const parentFacts = store.findByScope(parentScopeId);
+  for (const fact of parentFacts) {
+    if (fact.id === currentScopeId) {
+      return extractConstructorName(fact.fact[0]);
+    }
+  }
+
+  return undefined;
+}
 
 // Helper to check if current scope is a peer scope
 // A peer scope is one we navigated to via a peer(...) constructor fact
@@ -271,18 +292,24 @@ function renderFactTree(store: DatalogStore, currentScope: ScopeId, nodeId: stri
   return container;
 }
 
-function renderAddFactForm(store: DatalogStore, currentScope: ScopeId, nodeId: string): HTMLElement {
+function renderAddFactForm(
+  store: DatalogStore,
+  currentScope: ScopeId,
+  nodeId: string,
+  parentConstructor?: string
+): HTMLElement {
   const form = document.createElement('div');
   form.className = 'add-fact-form';
 
   let currentKeyValue = '';
 
-  // Key input with autocomplete
+  // Key input with autocomplete - filtered by parent constructor context
   const keyAutocomplete = createAutocompleteInput({
     store,
     scope: currentScope,
     type: 'key',
     placeholder: 'key (e.g., name, eq(x))',
+    parentConstructor,
     onChange: (v) => {
       currentKeyValue = v;
     },
@@ -683,19 +710,22 @@ export function renderApp(
     scopeSection.appendChild(scopeContent);
     container.appendChild(scopeSection);
 
+    // Get parent constructor for type context filtering
+    const parentConstructor = getParentConstructor(store, navigation);
+
     // Facts section (current scope only)
     const factsSection = document.createElement('div');
     factsSection.className = 'section';
     factsSection.innerHTML = `
       <div class="section-header">
         <h2>Facts</h2>
-        <span>${scopeFacts.length} in scope</span>
+        <span>${scopeFacts.length} in scope${parentConstructor ? ` (${parentConstructor} context)` : ''}</span>
       </div>
     `;
     const factsContent = document.createElement('div');
     factsContent.className = 'section-content';
     factsContent.appendChild(renderFactTree(store, currentScope, identity.nodeId));
-    factsContent.appendChild(renderAddFactForm(store, currentScope, identity.nodeId));
+    factsContent.appendChild(renderAddFactForm(store, currentScope, identity.nodeId, parentConstructor));
     factsSection.appendChild(factsContent);
     container.appendChild(factsSection);
 
