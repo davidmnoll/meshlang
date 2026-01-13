@@ -504,3 +504,109 @@ button:disabled {
   font-family: monospace;
   font-size: 13px;
 }
+
+/* Scope Navigator */
+.scope-navigator {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #1a1a2e;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+}
+
+.breadcrumb-dropdown {
+  padding: 4px 8px;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  background: #16213e;
+  color: #e94560;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.breadcrumb-dropdown:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.breadcrumb-name {
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.breadcrumb-name.clickable {
+  cursor: pointer;
+  color: #7ec8e3;
+}
+
+.breadcrumb-name.clickable:hover {
+  background: #0f3460;
+}
+
+.breadcrumb-name.current {
+  color: #eee;
+  font-weight: 500;
+}
+
+.child-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.child-scopes-label {
+  color: #7f8c8d;
+  font-size: 13px;
+}
+
+.child-scope-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: #0f3460;
+}
+
+.child-scope-btn:hover {
+  background: #16213e;
+  border: 1px solid #0f3460;
+}
+
+.add-child-scope-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: #1a936f;
+}
+
+.add-child-scope-btn:hover {
+  background: #158a65;
+}
+
+.scope-up-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: #555;
+  align-self: flex-start;
+}
+
+.scope-up-btn:hover {
+  background: #666;
+}
+
+/* Hidden utility */
+.hidden {
+  display: none !important;
+}

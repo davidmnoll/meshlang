@@ -2,14 +2,27 @@ import type { Identity } from '../identity/types';
 import type { StoredActor } from '../identity/storage';
 import type { DatalogStore } from '../datalog/store';
 import type { Mesh } from '../network/mesh';
-import type { StoredFact, Value, Pattern } from '../datalog/types';
+import type { Value, Pattern } from '../datalog/types';
+import type { NavigationState, ScopeId } from '../scope/types';
 import { query, v, bindingsToObject } from '../datalog/query';
 import { createExchangeUI } from '../bootstrap/clipboard';
+import {
+  createNavigationState,
+  navigateToChild,
+  navigateToParent,
+  navigateToPathIndex,
+  switchParentPath,
+  getScopeName,
+  getParentScopes,
+  getChildScopes,
+  createChildScope,
+} from '../scope/navigation';
 
 interface AppContext {
   identity: Identity;
   store: DatalogStore;
   mesh: Mesh;
+  navigation?: NavigationState;  // Optional - created if not provided
 }
 
 export interface ActorActions {
@@ -29,16 +42,124 @@ function formatValue(value: Value): string {
   return String(value);
 }
 
-function groupFactsByScope(facts: StoredFact[]): Map<string, StoredFact[]> {
-  const groups = new Map<string, StoredFact[]>();
-  for (const fact of facts) {
-    const scope = fact.scope;
-    if (!groups.has(scope)) {
-      groups.set(scope, []);
+// Scope navigator with breadcrumbs (DAG-aware)
+function renderScopeNavigator(
+  store: DatalogStore,
+  navigation: NavigationState,
+  onNavigate: (newState: NavigationState) => void
+): HTMLElement {
+  const container = document.createElement('div');
+  container.className = 'scope-navigator';
+
+  // Breadcrumbs
+  const breadcrumbs = document.createElement('div');
+  breadcrumbs.className = 'breadcrumbs';
+
+  navigation.path.forEach((scopeId, index) => {
+    const crumb = document.createElement('div');
+    crumb.className = 'breadcrumb';
+
+    const name = getScopeName(store, scopeId);
+    const parents = getParentScopes(store, scopeId);
+    const isLast = index === navigation.path.length - 1;
+
+    // If this scope has multiple parents, show dropdown
+    if (index > 0 && parents.length > 1) {
+      const dropdown = document.createElement('select');
+      dropdown.className = 'breadcrumb-dropdown';
+
+      // Current parent (the one in path)
+      const currentParent = navigation.path[index - 1];
+
+      parents.forEach((parentId) => {
+        const option = document.createElement('option');
+        option.value = parentId;
+        option.textContent = getScopeName(store, parentId);
+        option.selected = parentId === currentParent;
+        dropdown.appendChild(option);
+      });
+
+      dropdown.onchange = () => {
+        const newState = switchParentPath(navigation, index, dropdown.value);
+        onNavigate(newState);
+      };
+
+      crumb.appendChild(dropdown);
+      crumb.appendChild(document.createTextNode(' / '));
+    } else if (index > 0) {
+      crumb.appendChild(document.createTextNode(' / '));
     }
-    groups.get(scope)!.push(fact);
+
+    // Scope name (clickable unless it's the current scope)
+    const nameSpan = document.createElement('span');
+    nameSpan.className = `breadcrumb-name ${isLast ? 'current' : 'clickable'}`;
+    nameSpan.textContent = name;
+
+    if (!isLast) {
+      nameSpan.onclick = () => {
+        const newState = navigateToPathIndex(navigation, index);
+        onNavigate(newState);
+      };
+    }
+
+    crumb.appendChild(nameSpan);
+    breadcrumbs.appendChild(crumb);
+  });
+
+  container.appendChild(breadcrumbs);
+
+  // Child scopes
+  const children = getChildScopes(store, navigation.currentScope);
+  if (children.length > 0) {
+    const childList = document.createElement('div');
+    childList.className = 'child-scopes';
+
+    const label = document.createElement('span');
+    label.className = 'child-scopes-label';
+    label.textContent = 'Subscopes: ';
+    childList.appendChild(label);
+
+    children.forEach((childId) => {
+      const childBtn = document.createElement('button');
+      childBtn.className = 'child-scope-btn';
+      childBtn.textContent = getScopeName(store, childId);
+      childBtn.onclick = () => {
+        const newState = navigateToChild(navigation, childId);
+        onNavigate(newState);
+      };
+      childList.appendChild(childBtn);
+    });
+
+    container.appendChild(childList);
   }
-  return groups;
+
+  // Add new child scope button
+  const addChild = document.createElement('button');
+  addChild.className = 'add-child-scope-btn';
+  addChild.textContent = '+ New Subscope';
+  addChild.onclick = () => {
+    const name = prompt('Name for new subscope:');
+    if (name) {
+      const childId = createChildScope(store, navigation.currentScope, name, navigation.currentScope);
+      const newState = navigateToChild(navigation, childId);
+      onNavigate(newState);
+    }
+  };
+  container.appendChild(addChild);
+
+  // Up button
+  if (navigation.path.length > 1) {
+    const upBtn = document.createElement('button');
+    upBtn.className = 'scope-up-btn';
+    upBtn.textContent = '↑ Up';
+    upBtn.onclick = () => {
+      const newState = navigateToParent(navigation);
+      if (newState) onNavigate(newState);
+    };
+    container.appendChild(upBtn);
+  }
+
+  return container;
 }
 
 function parseValue(str: string): Value {
@@ -55,98 +176,79 @@ function parseValue(str: string): Value {
   return trimmed;
 }
 
-function renderFactTree(store: DatalogStore, nodeId: string): HTMLElement {
+// Render facts for current scope only
+function renderFactTree(store: DatalogStore, currentScope: ScopeId, nodeId: string): HTMLElement {
   const container = document.createElement('div');
-  const facts = store.all();
+  const facts = store.findByScope(currentScope);
 
   if (facts.length === 0) {
-    container.innerHTML = '<p class="empty-state">No facts yet. Add some below.</p>';
+    container.innerHTML = '<p class="empty-state">No facts in this scope. Add some below.</p>';
     return container;
   }
 
-  const groups = groupFactsByScope(facts);
   const list = document.createElement('ul');
   list.className = 'fact-list';
 
-  for (const [scope, scopeFacts] of groups) {
-    const scopeItem = document.createElement('li');
-    scopeItem.className = 'tree-item';
+  for (const storedFact of facts) {
+    const factEl = document.createElement('li');
+    factEl.className = 'fact-item';
 
-    const header = document.createElement('div');
-    header.className = 'tree-toggle';
-    const scopeLabel = scope === nodeId ? `${scope} (current)` : scope;
-    header.innerHTML = `<span class="scope">▼ ${scopeLabel}</span> <span style="color:#7f8c8d">(${scopeFacts.length})</span>`;
-    header.onclick = () => scopeItem.classList.toggle('collapsed');
+    // Key
+    const keySpan = document.createElement('span');
+    keySpan.className = 'key';
+    keySpan.textContent = storedFact.fact[0];
 
-    const children = document.createElement('ul');
-    children.className = 'tree-children fact-list';
+    const separator = document.createTextNode(': ');
 
-    for (const storedFact of scopeFacts) {
-      const factEl = document.createElement('li');
-      factEl.className = 'fact-item';
+    // Value - editable
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'value editable';
+    valueSpan.textContent = formatValue(storedFact.fact[1]);
+    valueSpan.title = 'Click to edit';
 
-      // Key (was attribute)
-      const keySpan = document.createElement('span');
-      keySpan.className = 'key';
-      keySpan.textContent = storedFact.fact[0];
+    valueSpan.onclick = () => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'fact-edit-input';
+      input.value = typeof storedFact.fact[1] === 'string'
+        ? storedFact.fact[1]
+        : String(storedFact.fact[1]);
 
-      const separator = document.createTextNode(': ');
+      const saveEdit = () => {
+        const newValue = parseValue(input.value);
+        const oldFact = storedFact.fact;
 
-      // Value - editable
-      const valueSpan = document.createElement('span');
-      valueSpan.className = 'value editable';
-      valueSpan.textContent = formatValue(storedFact.fact[1]);
-      valueSpan.title = 'Click to edit';
-
-      valueSpan.onclick = () => {
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'fact-edit-input';
-        input.value = typeof storedFact.fact[1] === 'string'
-          ? storedFact.fact[1]
-          : String(storedFact.fact[1]);
-
-        const saveEdit = () => {
-          const newValue = parseValue(input.value);
-          const oldFact = storedFact.fact;
-          const scope = storedFact.scope;
-
-          // Retract old fact and add new one
-          store.retract(oldFact, scope);
-          store.add([oldFact[0], newValue], nodeId, scope);
-        };
-
-        input.onblur = saveEdit;
-        input.onkeydown = (e) => {
-          if (e.key === 'Enter') {
-            saveEdit();
-          } else if (e.key === 'Escape') {
-            // Cancel - just trigger re-render
-            store.add(storedFact.fact, nodeId, storedFact.scope);
-          }
-        };
-
-        valueSpan.replaceWith(input);
-        input.focus();
-        input.select();
+        // Retract old fact and add new one
+        store.retract(oldFact, currentScope);
+        store.add([oldFact[0], newValue], nodeId, currentScope);
       };
 
-      factEl.appendChild(keySpan);
-      factEl.appendChild(separator);
-      factEl.appendChild(valueSpan);
-      children.appendChild(factEl);
-    }
+      input.onblur = saveEdit;
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          saveEdit();
+        } else if (e.key === 'Escape') {
+          // Cancel - just trigger re-render
+          store.add(storedFact.fact, nodeId, storedFact.scope);
+        }
+      };
 
-    scopeItem.appendChild(header);
-    scopeItem.appendChild(children);
-    list.appendChild(scopeItem);
+      valueSpan.replaceWith(input);
+      input.focus();
+      input.select();
+    };
+
+    factEl.appendChild(keySpan);
+    factEl.appendChild(separator);
+    factEl.appendChild(valueSpan);
+    list.appendChild(factEl);
   }
 
   container.appendChild(list);
   return container;
 }
 
-function renderAddFactForm(store: DatalogStore, nodeId: string): HTMLElement {
+function renderAddFactForm(store: DatalogStore, currentScope: ScopeId, nodeId: string): HTMLElement {
   const form = document.createElement('div');
   form.className = 'add-fact-form';
   form.innerHTML = `
@@ -171,8 +273,8 @@ function renderAddFactForm(store: DatalogStore, nodeId: string): HTMLElement {
     else if (value === 'null') value = null;
     else if (/^-?\d+(\.\d+)?$/.test(value as string)) value = parseFloat(value as string);
 
-    // Scope defaults to current actor (nodeId)
-    store.add([key, value], nodeId);
+    // Add to current scope
+    store.add([key, value], nodeId, currentScope);
 
     keyInput.value = '';
     valueInput.value = '';
@@ -191,22 +293,14 @@ function renderAddFactForm(store: DatalogStore, nodeId: string): HTMLElement {
   return form;
 }
 
-function renderQueryBuilder(store: DatalogStore, nodeId: string): HTMLElement {
+// Query builder - only searches in current scope
+function renderQueryBuilder(store: DatalogStore, currentScope: ScopeId): HTMLElement {
   const panel = document.createElement('div');
   panel.className = 'query-builder';
 
   panel.innerHTML = `
+    <h4>Query in current scope</h4>
     <div class="query-pattern">
-      <div class="pattern-slot" data-slot="scope">
-        <label>Scope</label>
-        <div class="slot-options">
-          <button class="slot-btn active" data-type="current">Current</button>
-          <button class="slot-btn" data-type="any">Any (?s)</button>
-          <button class="slot-btn" data-type="specific">Specific</button>
-        </div>
-        <input type="text" class="slot-input hidden" placeholder="scope" />
-      </div>
-
       <div class="pattern-slot" data-slot="key">
         <label>Key</label>
         <div class="slot-options">
@@ -237,25 +331,20 @@ function renderQueryBuilder(store: DatalogStore, nodeId: string): HTMLElement {
   const patternText = panel.querySelector('.pattern-text') as HTMLElement;
   const resultsDiv = panel.querySelector('.query-results') as HTMLDivElement;
 
-  // State for each slot
+  // State for each slot (scope is always current)
   const state: Record<string, { type: string; value: string }> = {
-    scope: { type: 'current', value: nodeId },
     key: { type: 'specific', value: '' },
     value: { type: 'any', value: '' },
   };
 
   function updatePreview() {
-    const scopePart = state.scope.type === 'current' ? 'current'
-      : state.scope.type === 'any' ? '?scope'
-      : state.scope.value || '?scope';
-
     const keyPart = state.key.type === 'any' ? '?key'
       : state.key.value || '?key';
 
     const valuePart = state.value.type === 'any' ? '?val'
       : state.value.value || '?val';
 
-    patternText.textContent = `(${keyPart}, ${valuePart}) in ${scopePart}`;
+    patternText.textContent = `[${keyPart}, ${valuePart}]`;
   }
 
   function runQuery() {
@@ -271,14 +360,8 @@ function renderQueryBuilder(store: DatalogStore, nodeId: string): HTMLElement {
 
       const pattern: Pattern = [keyPattern, valuePattern];
 
-      // Determine scope option
-      const scopeOption = state.scope.type === 'current'
-        ? { scope: nodeId }
-        : state.scope.type === 'specific' && state.scope.value
-          ? { scope: state.scope.value }
-          : { scopePattern: v('scope') };
-
-      const bindings = query(store, [pattern], scopeOption);
+      // Always query in current scope only
+      const bindings = query(store, [pattern], { scope: currentScope });
 
       if (bindings.length === 0) {
         resultsDiv.className = 'query-results empty';
@@ -313,7 +396,7 @@ function renderQueryBuilder(store: DatalogStore, nodeId: string): HTMLElement {
         state[slotName].type = type;
 
         // Show/hide input
-        if (type === 'specific' || (slotName === 'scope' && type === 'specific')) {
+        if (type === 'specific') {
           input.classList.remove('hidden');
           input.focus();
         } else {
@@ -470,8 +553,18 @@ export function renderApp(
 ): void {
   const { identity, store, mesh } = ctx;
 
+  // Navigation state - starts at actor's root scope
+  let navigation = ctx.navigation || createNavigationState(identity.nodeId);
+
+  function handleNavigate(newState: NavigationState) {
+    navigation = newState;
+    render();
+  }
+
   function render() {
     const peerCount = mesh.getPeerCount();
+    const currentScope = navigation.currentScope;
+    const scopeFacts = store.findByScope(currentScope);
 
     container.innerHTML = '';
 
@@ -492,23 +585,37 @@ export function renderApp(
     header.appendChild(renderActorSwitcher(identity.nodeId, actorActions, store));
     container.appendChild(header);
 
-    // Facts section
+    // Scope Navigator section
+    const scopeSection = document.createElement('div');
+    scopeSection.className = 'section';
+    scopeSection.innerHTML = `
+      <div class="section-header">
+        <h2>Scope</h2>
+      </div>
+    `;
+    const scopeContent = document.createElement('div');
+    scopeContent.className = 'section-content';
+    scopeContent.appendChild(renderScopeNavigator(store, navigation, handleNavigate));
+    scopeSection.appendChild(scopeContent);
+    container.appendChild(scopeSection);
+
+    // Facts section (current scope only)
     const factsSection = document.createElement('div');
     factsSection.className = 'section';
     factsSection.innerHTML = `
       <div class="section-header">
         <h2>Facts</h2>
-        <span>${store.all().length} total</span>
+        <span>${scopeFacts.length} in scope</span>
       </div>
     `;
     const factsContent = document.createElement('div');
     factsContent.className = 'section-content';
-    factsContent.appendChild(renderFactTree(store, identity.nodeId));
-    factsContent.appendChild(renderAddFactForm(store, identity.nodeId));
+    factsContent.appendChild(renderFactTree(store, currentScope, identity.nodeId));
+    factsContent.appendChild(renderAddFactForm(store, currentScope, identity.nodeId));
     factsSection.appendChild(factsContent);
     container.appendChild(factsSection);
 
-    // Query section
+    // Query section (current scope only)
     const querySection = document.createElement('div');
     querySection.className = 'section';
     querySection.innerHTML = `
@@ -518,7 +625,7 @@ export function renderApp(
     `;
     const queryContent = document.createElement('div');
     queryContent.className = 'section-content';
-    queryContent.appendChild(renderQueryBuilder(store, identity.nodeId));
+    queryContent.appendChild(renderQueryBuilder(store, currentScope));
     querySection.appendChild(queryContent);
     container.appendChild(querySection);
 
