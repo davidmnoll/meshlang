@@ -75,6 +75,29 @@ function isPeerScope(store: DatalogStore, navigation: NavigationState): { isPeer
   return { isPeer: false };
 }
 
+// Helper to check if current scope is a group scope
+function isGroupScope(store: DatalogStore, navigation: NavigationState): { isGroup: boolean; groupId?: string; groupName?: string } {
+  if (navigation.path.length < 2) {
+    return { isGroup: false };
+  }
+
+  const parentScopeId = navigation.path[navigation.path.length - 2];
+  const currentScopeId = navigation.currentScope;
+
+  const parentFacts = store.findByScope(parentScopeId);
+  for (const fact of parentFacts) {
+    if (fact.id === currentScopeId) {
+      const key = fact.fact[0];
+      const groupMatch = key.match(/^group\("([^"]+)"\)$/);
+      if (groupMatch) {
+        return { isGroup: true, groupId: currentScopeId, groupName: groupMatch[1] };
+      }
+    }
+  }
+
+  return { isGroup: false };
+}
+
 interface AppContext {
   identity: Identity;
   store: DatalogStore;
@@ -201,6 +224,145 @@ function renderScopeNavigator(
       if (newState) onNavigate(newState);
     };
     container.appendChild(upBtn);
+  }
+
+  return container;
+}
+
+// Render group management UI
+function renderGroupUI(
+  mesh: Mesh,
+  groupId: string,
+  groupName: string,
+  nodeId: string
+): HTMLElement {
+  const container = document.createElement('div');
+  container.className = 'group-management';
+
+  const groups = mesh.groups;
+
+  // Check if we're in this group
+  const group = groups.getGroup(groupId);
+  const isInGroup = groups.isInGroup(groupId);
+
+  if (!isInGroup) {
+    // Check for pending invite
+    const invites = groups.getPendingInvites();
+    const invite = invites.find((i) => i.groupId === groupId);
+
+    if (invite) {
+      container.innerHTML = `
+        <div class="group-invite">
+          <p>You've been invited to group "${invite.groupName}" by ${invite.from.slice(0, 8)}...</p>
+          <p>Members: ${invite.members.map((m) => m.slice(0, 8)).join(', ')}</p>
+          <div class="group-invite-actions">
+            <button class="accept-invite">Accept</button>
+            <button class="reject-invite">Reject</button>
+          </div>
+        </div>
+      `;
+
+      container.querySelector('.accept-invite')!.addEventListener('click', () => {
+        groups.respondToInvite(groupId, true);
+      });
+      container.querySelector('.reject-invite')!.addEventListener('click', () => {
+        groups.respondToInvite(groupId, false);
+      });
+    } else {
+      // Create the group
+      container.innerHTML = `
+        <div class="group-create">
+          <p>Create group "${groupName}"</p>
+          <button class="create-group-btn">Create Group</button>
+        </div>
+      `;
+
+      container.querySelector('.create-group-btn')!.addEventListener('click', () => {
+        groups.createGroup(groupId, groupName);
+      });
+    }
+
+    return container;
+  }
+
+  // We're in the group - show management UI
+  const members = group!.members;
+  const peers = mesh.getPeers();
+  const proposals = groups.getProposals(groupId);
+
+  container.innerHTML = `
+    <div class="group-info">
+      <h4>Group: ${groupName}</h4>
+      <p class="group-members">Members: ${members.map((m) => m.slice(0, 8) + (m === nodeId ? ' (you)' : '')).join(', ')}</p>
+      <p class="group-consensus">Consensus: ${typeof group!.consensus === 'string' ? group!.consensus : `threshold(${group!.consensus.threshold})`}</p>
+    </div>
+    <div class="group-invite-peers">
+      <h5>Invite Peer</h5>
+      <select class="peer-select">
+        <option value="">Select a connected peer...</option>
+        ${peers
+          .filter((p) => !members.includes(p.nodeId))
+          .map((p) => `<option value="${p.nodeId}">${p.nodeId.slice(0, 8)}...</option>`)
+          .join('')}
+      </select>
+      <button class="invite-peer-btn" disabled>Invite</button>
+    </div>
+    ${proposals.length > 0 ? `
+    <div class="group-proposals">
+      <h5>Pending Proposals (${proposals.length})</h5>
+      <div class="proposals-list"></div>
+    </div>
+    ` : ''}
+  `;
+
+  // Invite peer handling
+  const peerSelect = container.querySelector('.peer-select') as HTMLSelectElement;
+  const inviteBtn = container.querySelector('.invite-peer-btn') as HTMLButtonElement;
+
+  peerSelect.onchange = () => {
+    inviteBtn.disabled = !peerSelect.value;
+  };
+
+  inviteBtn.onclick = () => {
+    if (peerSelect.value) {
+      groups.invitePeer(groupId, peerSelect.value);
+      peerSelect.value = '';
+      inviteBtn.disabled = true;
+    }
+  };
+
+  // Render proposals
+  if (proposals.length > 0) {
+    const proposalsList = container.querySelector('.proposals-list')!;
+    for (const proposal of proposals) {
+      const hasVoted = proposal.votes.has(nodeId);
+      const myVote = proposal.votes.get(nodeId);
+
+      const proposalEl = document.createElement('div');
+      proposalEl.className = 'proposal-item';
+      proposalEl.innerHTML = `
+        <div class="proposal-fact">[${proposal.fact.fact[0]}, ${JSON.stringify(proposal.fact.fact[1])}]</div>
+        <div class="proposal-from">From: ${proposal.from.slice(0, 8)}...</div>
+        <div class="proposal-votes">Votes: ${Array.from(proposal.votes.entries()).map(([n, v]) => `${n.slice(0, 8)}:${v ? 'Y' : 'N'}`).join(', ')}</div>
+        ${!hasVoted ? `
+        <div class="proposal-actions">
+          <button class="vote-yes">Approve</button>
+          <button class="vote-no">Reject</button>
+        </div>
+        ` : `<div class="voted">You voted: ${myVote ? 'Yes' : 'No'}</div>`}
+      `;
+
+      if (!hasVoted) {
+        proposalEl.querySelector('.vote-yes')!.addEventListener('click', () => {
+          groups.vote(proposal.id, true);
+        });
+        proposalEl.querySelector('.vote-no')!.addEventListener('click', () => {
+          groups.vote(proposal.id, false);
+        });
+      }
+
+      proposalsList.appendChild(proposalEl);
+    }
   }
 
   return container;
@@ -760,6 +922,24 @@ export function renderApp(
       connectSection.appendChild(connectContent);
       container.appendChild(connectSection);
     }
+
+    // Group section - only shown when inside a group scope
+    const groupInfo = isGroupScope(store, navigation);
+    if (groupInfo.isGroup && groupInfo.groupId && groupInfo.groupName) {
+      const groupSection = document.createElement('div');
+      groupSection.className = 'section';
+      groupSection.innerHTML = `
+        <div class="section-header">
+          <h2>Group</h2>
+          <span>group("${groupInfo.groupName}")</span>
+        </div>
+      `;
+      const groupContent = document.createElement('div');
+      groupContent.className = 'section-content';
+      groupContent.appendChild(renderGroupUI(mesh, groupInfo.groupId, groupInfo.groupName, identity.nodeId));
+      groupSection.appendChild(groupContent);
+      container.appendChild(groupSection);
+    }
   }
 
   // Initial render
@@ -770,4 +950,7 @@ export function renderApp(
 
   // Re-render on mesh changes
   mesh.onChange(() => render());
+
+  // Re-render on group changes
+  mesh.groups.onChange(() => render());
 }

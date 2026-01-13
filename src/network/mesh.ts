@@ -3,20 +3,37 @@ import type { DatalogStore } from '../datalog/store';
 import { serializeFact, deserializeFact } from '../datalog/serialize';
 import { Peer } from './peer';
 import type { Message, PeerInfo } from './protocol';
+import { GroupManager } from './group';
 
 export class Mesh {
   private peers: Map<string, Peer> = new Map();
   private listeners: Set<() => void> = new Set();
+  readonly groups: GroupManager;
 
   constructor(
     private identity: Identity,
     private store: DatalogStore
   ) {
+    // Initialize group manager with message sending capability
+    this.groups = new GroupManager(
+      identity.nodeId,
+      store,
+      (nodeId, msg) => this.sendToNode(nodeId, msg)
+    );
+
     // Broadcast new facts to all peers
     store.onAdd((fact) => {
       const msg: Message = { type: 'fact-add', fact: serializeFact(fact) };
       this.broadcast(msg);
     });
+  }
+
+  // Send message to a specific node
+  private sendToNode(nodeId: string, msg: Message): void {
+    const peer = this.peers.get(nodeId);
+    if (peer && peer.getState() === 'connected') {
+      peer.send(msg);
+    }
   }
 
   private broadcast(msg: Message, excludeNodeId?: string): void {
@@ -104,6 +121,36 @@ export class Mesh {
 
       case 'peer-announce':
         // TODO: DHT integration
+        break;
+
+      // Group messages
+      case 'group-invite':
+        this.groups.handleInvite(msg);
+        this.notifyListeners();
+        break;
+
+      case 'group-invite-response':
+        this.groups.handleInviteResponse(msg);
+        this.notifyListeners();
+        break;
+
+      case 'group-proposal':
+        this.groups.handleProposal(msg);
+        this.notifyListeners();
+        break;
+
+      case 'group-vote':
+        this.groups.handleVote(msg);
+        this.notifyListeners();
+        break;
+
+      case 'group-sync-request':
+        this.groups.handleSyncRequest(msg);
+        break;
+
+      case 'group-sync-response':
+        this.groups.handleSyncResponse(msg);
+        this.notifyListeners();
         break;
     }
   }

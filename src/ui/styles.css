@@ -698,3 +698,170 @@ button:disabled {
   border-radius: 3px;
   font-family: monospace;
 }
+
+/* Group Management */
+.group-management {
+  padding: 8px 0;
+}
+
+.group-info h4 {
+  margin: 0 0 8px 0;
+  color: #e94560;
+}
+
+.group-members,
+.group-consensus {
+  font-size: 13px;
+  color: #aaa;
+  margin: 4px 0;
+}
+
+.group-invite-peers {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #0f3460;
+}
+
+.group-invite-peers h5,
+.group-proposals h5 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #7ec8e3;
+}
+
+.peer-select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  background: #1a1a2e;
+  color: #eee;
+  font-size: 14px;
+  margin-right: 8px;
+}
+
+.peer-select:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.invite-peer-btn {
+  padding: 8px 16px;
+}
+
+.group-invite-peers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-invite {
+  background: #16213e;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.group-invite p {
+  margin: 4px 0;
+}
+
+.group-invite-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.accept-invite {
+  background: #1a936f;
+}
+
+.accept-invite:hover {
+  background: #158a65;
+}
+
+.reject-invite {
+  background: #c0392b;
+}
+
+.reject-invite:hover {
+  background: #a93226;
+}
+
+.group-create {
+  text-align: center;
+  padding: 20px;
+}
+
+.group-create p {
+  margin-bottom: 12px;
+  color: #aaa;
+}
+
+.create-group-btn {
+  background: #1a936f;
+}
+
+.create-group-btn:hover {
+  background: #158a65;
+}
+
+.group-proposals {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #0f3460;
+}
+
+.proposal-item {
+  background: #1a1a2e;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.proposal-fact {
+  font-family: monospace;
+  color: #a7c957;
+  margin-bottom: 4px;
+}
+
+.proposal-from,
+.proposal-votes {
+  font-size: 12px;
+  color: #7f8c8d;
+  margin-bottom: 4px;
+}
+
+.proposal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.vote-yes {
+  background: #1a936f;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.vote-yes:hover {
+  background: #158a65;
+}
+
+.vote-no {
+  background: #c0392b;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.vote-no:hover {
+  background: #a93226;
+}
+
+.voted {
+  font-size: 12px;
+  color: #7f8c8d;
+  font-style: italic;
+  margin-top: 8px;
+}
