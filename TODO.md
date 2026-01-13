@@ -50,15 +50,27 @@ group("group-name")
 
 ---
 
-## Pending Implementation
+## Implemented
 
-### [ ] Group Consensus Implementation
-- When peers are added to a group, send invitation messages
-- Create group root scope synced among all members
-- Implement consensus algorithms:
-  - `unanimous`: all peers must agree (default)
-  - `majority`: >50% must agree
-  - `threshold(n)`: n peers must agree
+### [x] Group Consensus System
+- GroupManager handles memberships, invitations, proposals
+- Message types: group-invite, group-proposal, group-vote, etc.
+- Consensus algorithms: unanimous, majority, threshold(n)
+- UI: Create groups, invite peers, vote on proposals
+- Files: `src/network/group.ts`, protocol updates in `mesh.ts`
+
+### [x] Type Context Filtering
+- `allowedChildren` in ConstructorDef filters autocomplete
+- Parent constructor detected from navigation path
+- Autocomplete shows only valid constructors for context
+
+### [x] Peer Connection via Constructor
+- `peer("id")` constructor creates navigable scope
+- Connection UI appears when navigated into peer scope
+
+---
+
+## Pending Implementation
 
 ### [ ] Interaction Nets as Query Semantics
 - Queries as interaction patterns (Fact >< Match)
