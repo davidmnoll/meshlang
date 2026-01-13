@@ -255,6 +255,7 @@ export const BUILTIN_CONSTRUCTORS: ConstructorDef[] = [
   { name: 'gt', params: [{ name: 'num', type: 'number' }], description: 'Greater than' },
   { name: 'ref', params: [{ name: 'target', type: 'any' }], description: 'Reference to another scope/symbol' },
   { name: 'list', params: [{ name: 'items', type: 'any' }], description: 'List of items' },
+  { name: 'peer', params: [{ name: 'id', type: 'string' }], description: 'Peer connection - navigate into to connect' },
 ];
 
 // Initialize scope with built-in constructors

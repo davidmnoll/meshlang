@@ -26,6 +26,34 @@ import {
 import { tryParseExpression } from '../expr/parse';
 import { formatExpression, isConstructor } from '../expr/types';
 
+// Helper to check if current scope is a peer scope
+// A peer scope is one we navigated to via a peer(...) constructor fact
+function isPeerScope(store: DatalogStore, navigation: NavigationState): { isPeer: boolean; peerId?: string } {
+  if (navigation.path.length < 2) {
+    return { isPeer: false };
+  }
+
+  // Get the parent scope
+  const parentScopeId = navigation.path[navigation.path.length - 2];
+  const currentScopeId = navigation.currentScope;
+
+  // Find the fact in parent scope that led to this scope
+  const parentFacts = store.findByScope(parentScopeId);
+  for (const fact of parentFacts) {
+    // The fact ID becomes the child scope ID when navigating
+    if (fact.id === currentScopeId) {
+      const key = fact.fact[0];
+      // Check if it's a peer(...) constructor
+      const peerMatch = key.match(/^peer\("([^"]+)"\)$/);
+      if (peerMatch) {
+        return { isPeer: true, peerId: peerMatch[1] };
+      }
+    }
+  }
+
+  return { isPeer: false };
+}
+
 interface AppContext {
   identity: Identity;
   store: DatalogStore;
@@ -685,19 +713,23 @@ export function renderApp(
     querySection.appendChild(queryContent);
     container.appendChild(querySection);
 
-    // Connect section
-    const connectSection = document.createElement('div');
-    connectSection.className = 'section';
-    connectSection.innerHTML = `
-      <div class="section-header">
-        <h2>Connect</h2>
-      </div>
-    `;
-    const connectContent = document.createElement('div');
-    connectContent.className = 'section-content';
-    createExchangeUI(connectContent, mesh, render);
-    connectSection.appendChild(connectContent);
-    container.appendChild(connectSection);
+    // Peer Connect section - only shown when inside a peer scope
+    const peerInfo = isPeerScope(store, navigation);
+    if (peerInfo.isPeer) {
+      const connectSection = document.createElement('div');
+      connectSection.className = 'section';
+      connectSection.innerHTML = `
+        <div class="section-header">
+          <h2>Peer Connection</h2>
+          <span>peer(${peerInfo.peerId?.slice(0, 8)}...)</span>
+        </div>
+      `;
+      const connectContent = document.createElement('div');
+      connectContent.className = 'section-content';
+      createExchangeUI(connectContent, mesh, render);
+      connectSection.appendChild(connectContent);
+      container.appendChild(connectSection);
+    }
   }
 
   // Initial render
