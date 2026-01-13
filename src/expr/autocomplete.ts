@@ -118,9 +118,15 @@ export function suggestKeys(
     }
   }
 
-  // 2. Constructors
-  const constructors = getConstructorDefs(store, scope);
-  for (const def of constructors) {
+  // 2. Constructors from store + built-ins
+  const storeConstructors = getConstructorDefs(store, scope);
+  const allConstructors = [...BUILTIN_CONSTRUCTORS, ...storeConstructors];
+  const seenNames = new Set<string>();
+
+  for (const def of allConstructors) {
+    if (seenNames.has(def.name)) continue;
+    seenNames.add(def.name);
+
     if (def.name.toLowerCase().includes(lower)) {
       if (def.params.length === 0) {
         suggestions.push({
@@ -145,7 +151,7 @@ export function suggestKeys(
   // 3. Check if we're inside a constructor call
   const partial = getPartialConstructor(input);
   if (partial) {
-    const def = constructors.find((c) => c.name === partial.name);
+    const def = allConstructors.find((c) => c.name === partial.name);
     if (def && partial.argCount < def.params.length) {
       const param = def.params[partial.argCount];
       // Suggest based on param type

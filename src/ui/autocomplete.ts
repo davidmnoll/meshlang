@@ -33,6 +33,13 @@ export function createAutocompleteInput(config: AutocompleteConfig): HTMLElement
   let selectedIndex = -1;
   let suggestions: Suggestion[] = [];
 
+  function positionDropdown() {
+    const rect = input.getBoundingClientRect();
+    dropdown.style.top = `${rect.bottom + 2}px`;
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.width = `${rect.width}px`;
+  }
+
   function updateDropdown() {
     const value = input.value;
 
@@ -52,6 +59,7 @@ export function createAutocompleteInput(config: AutocompleteConfig): HTMLElement
 
     dropdown.innerHTML = '';
     selectedIndex = -1;
+    positionDropdown();
 
     suggestions.forEach((s, i) => {
       const item = document.createElement('div');

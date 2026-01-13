@@ -627,17 +627,15 @@ button:disabled {
 }
 
 .autocomplete-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
+  position: fixed;
   background: #16213e;
-  border: 1px solid #0f3460;
-  border-top: none;
-  border-radius: 0 0 4px 4px;
+  border: 1px solid #e94560;
+  border-radius: 4px;
   max-height: 200px;
   overflow-y: auto;
-  z-index: 100;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  min-width: 200px;
 }
 
 .autocomplete-item {
