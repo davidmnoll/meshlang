@@ -2,7 +2,7 @@ import type { Identity } from '../identity/types';
 import type { DatalogStore } from '../datalog/store';
 import { serializeFact, deserializeFact } from '../datalog/serialize';
 import { Peer } from './peer';
-import type { Message, PeerInfo } from './protocol';
+import type { Message, PeerInfo, ScopeQuery, ScopeData } from './protocol';
 import { GroupManager } from './group';
 
 export class Mesh {
@@ -152,7 +152,107 @@ export class Mesh {
         this.groups.handleSyncResponse(msg);
         this.notifyListeners();
         break;
+
+      // Scope-based queries
+      case 'scope-query':
+        this.handleScopeQuery(peer, msg.scopes);
+        break;
+
+      case 'scope-response':
+        this.handleScopeResponse(msg.scopes);
+        break;
+
+      case 'scope-hashes':
+        this.handleScopeHashes(peer, msg.hashes);
+        break;
     }
+  }
+
+  // Handle scope query - return requested scopes if visible
+  private handleScopeQuery(peer: Peer, queries: ScopeQuery[]): void {
+    if (!peer.remoteInfo) return;
+    const peerId = peer.remoteInfo.nodeId;
+
+    const responses: ScopeData[] = [];
+
+    for (const q of queries) {
+      // Check visibility
+      if (!this.store.isVisibleTo(q.scope, peerId)) {
+        continue;
+      }
+
+      const currentHash = this.store.getScopeHash(q.scope);
+
+      // Only send if hash differs
+      if (currentHash !== q.knownHash) {
+        const facts = this.store.findByScope(q.scope);
+        responses.push({
+          scope: q.scope,
+          hash: currentHash,
+          facts: facts.map(serializeFact),
+        });
+      }
+    }
+
+    if (responses.length > 0) {
+      peer.send({ type: 'scope-response', scopes: responses });
+    }
+  }
+
+  // Handle scope response - merge received facts
+  private handleScopeResponse(scopes: ScopeData[]): void {
+    for (const scopeData of scopes) {
+      for (const factData of scopeData.facts) {
+        const stored = deserializeFact(factData);
+        this.store.addStored(stored);
+      }
+    }
+    this.notifyListeners();
+  }
+
+  // Handle scope hashes broadcast - request scopes where we differ
+  private handleScopeHashes(peer: Peer, remoteHashes: Record<string, string>): void {
+    if (!peer.remoteInfo) return;
+
+    const queries: ScopeQuery[] = [];
+    const localHashes = this.store.getScopeHashes();
+
+    // Check each remote scope
+    for (const [scope, remoteHash] of Object.entries(remoteHashes)) {
+      const localHash = localHashes.get(scope) ?? '';
+
+      // If we don't have it or hash differs, request it
+      if (localHash !== remoteHash) {
+        queries.push({ scope, knownHash: localHash });
+      }
+    }
+
+    if (queries.length > 0) {
+      peer.send({ type: 'scope-query', scopes: queries });
+    }
+  }
+
+  // Query a peer for specific scopes
+  queryPeer(peerId: string, scopes: string[]): void {
+    const peer = this.peers.get(peerId);
+    if (!peer || peer.getState() !== 'connected') return;
+
+    const queries: ScopeQuery[] = scopes.map((scope) => ({
+      scope,
+      knownHash: this.store.getScopeHash(scope),
+    }));
+
+    peer.send({ type: 'scope-query', scopes: queries });
+  }
+
+  // Broadcast our scope hashes to all peers
+  broadcastScopeHashes(): void {
+    const hashes: Record<string, string> = {};
+    for (const [scope, hash] of this.store.getScopeHashes()) {
+      hashes[scope] = hash;
+    }
+
+    this.broadcast({ type: 'scope-hashes', hashes });
   }
 
   async createOffer(): Promise<string> {

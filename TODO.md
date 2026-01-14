@@ -52,12 +52,13 @@ group("group-name")
 
 ## Implemented
 
-### [x] Group Consensus System
-- GroupManager handles memberships, invitations, proposals
-- Message types: group-invite, group-proposal, group-vote, etc.
-- Consensus algorithms: unanimous, majority, threshold(n)
-- UI: Create groups, invite peers, vote on proposals
-- Files: `src/network/group.ts`, protocol updates in `mesh.ts`
+### [x] Group Consensus System (Refactored)
+- **Now expressed in the language itself** via stdlib constructors
+- Scope hashing: deterministic content hash for each scope
+- Scope visibility: control which peers can see which scopes
+- Pull-based queries: peers request scopes by hash, only visible scopes returned
+- Standard library: `src/stdlib/consensus.ts` defines group, proposal, vote constructors
+- See `CONSENSUS_DESIGN.md` for full design
 
 ### [x] Type Context Filtering
 - `allowedChildren` in ConstructorDef filters autocomplete

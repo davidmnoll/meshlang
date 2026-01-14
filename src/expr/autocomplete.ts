@@ -8,6 +8,7 @@
 import type { DatalogStore } from '../datalog/store';
 import type { ConstructorDef, ParamDef } from './types';
 import { getPartialConstructor } from './parse';
+import { STDLIB_CONSTRUCTORS } from '../stdlib/consensus';
 
 export interface Suggestion {
   text: string;           // What to insert
@@ -99,7 +100,7 @@ export function getAvailableScopes(store: DatalogStore, currentScope: string): A
 
 // Get a constructor definition by name
 export function getConstructorByName(name: string): ConstructorDef | undefined {
-  return BUILTIN_CONSTRUCTORS.find((c) => c.name === name);
+  return ALL_CONSTRUCTORS.find((c) => c.name === name);
 }
 
 // Extract constructor name from a key like "name" or "eq(symbol("x"))"
@@ -109,7 +110,7 @@ export function extractConstructorName(key: string): string | undefined {
   if (match) return match[1];
 
   // Try 0-ary constructor: just the name
-  const def = BUILTIN_CONSTRUCTORS.find((c) => c.name === key && c.params.length === 0);
+  const def = ALL_CONSTRUCTORS.find((c) => c.name === key && c.params.length === 0);
   if (def) return key;
 
   return undefined;
@@ -153,7 +154,7 @@ export function suggestKeys(
   // 2. Constructors - filtered by parent context
   if (!isTerminal) {
     const storeConstructors = getConstructorDefs(store, scope);
-    const allConstructors = [...BUILTIN_CONSTRUCTORS, ...storeConstructors];
+    const allConstructors = [...ALL_CONSTRUCTORS, ...storeConstructors];
     const seenNames = new Set<string>();
 
     for (const def of allConstructors) {
@@ -190,7 +191,7 @@ export function suggestKeys(
   // 3. Check if we're inside a constructor call
   const partial = getPartialConstructor(input);
   if (partial) {
-    const allConstructors = [...BUILTIN_CONSTRUCTORS, ...getConstructorDefs(store, scope)];
+    const allConstructors = [...ALL_CONSTRUCTORS, ...getConstructorDefs(store, scope)];
     const def = allConstructors.find((c) => c.name === partial.name);
     if (def && partial.argCount < def.params.length) {
       const param = def.params[partial.argCount];
@@ -314,9 +315,15 @@ export const BUILTIN_CONSTRUCTORS: ConstructorDef[] = [
   { name: 'item', params: [{ name: 'value', type: 'any' }], description: 'List item', allowedChildren: [] },
 ];
 
+// All available constructors (builtins + stdlib)
+export const ALL_CONSTRUCTORS: ConstructorDef[] = [
+  ...BUILTIN_CONSTRUCTORS,
+  ...STDLIB_CONSTRUCTORS,
+];
+
 // Initialize scope with built-in constructors
 export function initBuiltinConstructors(store: DatalogStore, scope: string, source: string): void {
-  for (const def of BUILTIN_CONSTRUCTORS) {
+  for (const def of ALL_CONSTRUCTORS) {
     store.add(['constructor', def as unknown as string], source, scope);
   }
 }
